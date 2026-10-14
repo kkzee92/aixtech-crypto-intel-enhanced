@@ -1,6 +1,6 @@
 """Asset-class strategy research rules.
 
-Enhanced multi-factor heuristics with adaptive volatility thresholds and RSI periods for paper research (v0.6).
+Enhanced multi-factor heuristics with adaptive volatility thresholds, MACD-style confirmation, and tighter filters for paper research (v0.7).
 Not forecasts and not a recommendation to trade. Each class has an entry, an invalidation, regime and vol overlay.
 """
 
@@ -13,14 +13,14 @@ from crypto_intel.regime import Regime, VolatilityTier, classify, volatility_tie
 
 PLAYBOOK: dict[AssetClass, dict[str, str]] = {
     AssetClass.MAJOR: {
-        "hypothesis": "Liquid majors trend with multi-EMA alignment and vol-adjusted RSI (adaptive period), except in stress.",
-        "entry": "Fast > mid > slow EMA, RSI in vol-adjusted band (period longer in low vol).",
+        "hypothesis": "Liquid majors trend with multi-EMA alignment, MACD-style momentum, and vol-adjusted RSI (adaptive period), except in stress.",
+        "entry": "Fast > mid > slow EMA, positive rising MACD proxy, RSI in vol-adjusted band.",
         "invalidation": "Stress regime, or RSI stretched beyond vol-adjusted limit.",
         "horizon": "8 bars mean-reversion, 20 bars trend",
     },
     AssetClass.LARGE_CAP_ALT: {
-        "hypothesis": "Volume-confirmed breakouts with multi-momentum usable outside stress; higher confirmation in high vol.",
-        "entry": "Close above prior 5-bar high, volume > adaptive mult, positive short and medium momentum.",
+        "hypothesis": "Volume-confirmed breakouts with multi-momentum and MACD usable outside stress; higher confirmation in high vol.",
+        "entry": "Close above prior 5-bar high, volume > adaptive mult, positive short/medium momentum and MACD.",
         "invalidation": "Stress or missing confirmation.",
         "horizon": "12 bars",
     },
@@ -37,14 +37,14 @@ PLAYBOOK: dict[AssetClass, dict[str, str]] = {
         "horizon": "10 bars",
     },
     AssetClass.MEME: {
-        "hypothesis": "Most bursts untradeable. Qualified need volume accel, tighter extension in high vol, and momentum consistency.",
-        "entry": "15% 4-bar burst, vol accel > adaptive, extension < adaptive limit, rising closes.",
-        "invalidation": "Thin liquidity or excessive extension.",
+        "hypothesis": "Most bursts untradeable. Qualified need volume accel, tighter extension in high vol, rising closes, and RSI not overbought.",
+        "entry": "15% 4-bar burst, vol accel > adaptive, extension < adaptive limit, rising closes, RSI < 78.",
+        "invalidation": "Thin liquidity, excessive extension, or overbought RSI.",
         "horizon": "3 bars",
     },
     AssetClass.L2: {
-        "hypothesis": "L2 are multi-period relative-strength bets vs non-stress benchmark; excess thresholds vol-adjusted.",
-        "entry": "6-bar and 12-bar excess return above adaptive thresholds vs benchmark.",
+        "hypothesis": "L2 are multi-period relative-strength bets vs non-stress benchmark; excess thresholds vol-adjusted; relative volume preferred.",
+        "entry": "6-bar and 12-bar excess return above adaptive thresholds vs benchmark, with relative volume.",
         "invalidation": "Missing or stressed benchmark.",
         "horizon": "12 bars",
     },
@@ -56,7 +56,7 @@ PLAYBOOK: dict[AssetClass, dict[str, str]] = {
     },
     AssetClass.PERPETUAL: {
         "hypothesis": "Negative funding with contained adaptive drift, stable funding, non-stress is carry observation.",
-        "entry": "Funding <= -5 bps, |drift| < adaptive, funding stable, not stress, positive or contained momentum.",
+        "entry": "Funding <= -5 bps, |drift| < adaptive, funding stable, not stress, contained momentum.",
         "invalidation": "Crowded funding, large drift, or stress.",
         "horizon": "8 bars",
     },
@@ -73,6 +73,13 @@ def _ema(values: list[float], span: int) -> float:
     for point in values[1:]:
         value = alpha * point + (1 - alpha) * value
     return value
+
+
+def _macd_proxy(closes: list[float]) -> float:
+    """Simple MACD-style: EMA12 - EMA26. Research proxy, not full histogram."""
+    if len(closes) < 26:
+        return 0.0
+    return _ema(closes, 12) - _ema(closes, 26)
 
 
 def _rsi(closes: list[float], period: int = 14) -> float:
@@ -95,7 +102,6 @@ def _base(candles: list[Candle], side: Side, confidence: float, reason: str, siz
     last = candles[-1]
     regime = classify(candles)
     vol = volatility_tier(candles)
-    # Confidence haircut in high vol
     adj_conf = confidence * 0.92 if vol is VolatilityTier.HIGH else confidence
     return Signal(
         symbol=last.symbol,
@@ -139,10 +145,12 @@ def _major(candles: list[Candle], closes: list[float], regime: Regime, vol: Vola
     rsi = _rsi(closes, rsi_period)
     rsi_upper = 63 if vol is VolatilityTier.HIGH else 70
     rsi_lower_rev = 26 if vol is VolatilityTier.HIGH else 32
+    macd = _macd_proxy(closes)
+    macd_rising = macd > 0 and (len(closes) < 2 or macd > _macd_proxy(closes[:-1]))
     if regime is Regime.STRESS:
         return _base(candles, Side.FLAT, 0.45, "major stress: stand aside", 0.0, 1)
-    if fast > mid > slow and 45 <= rsi <= rsi_upper:
-        return _base(candles, Side.LONG, 0.80, "major multi-EMA alignment, adaptive RSI not stretched", 0.06, 20)
+    if fast > mid > slow and macd_rising and 45 <= rsi <= rsi_upper:
+        return _base(candles, Side.LONG, 0.82, "major multi-EMA + MACD confirmation, adaptive RSI not stretched", 0.06, 20)
     if regime is Regime.RANGE and rsi < rsi_lower_rev and closes[-1] > closes[-3]:
         return _base(candles, Side.LONG, 0.67, "major mean-reversion: washed-out adaptive RSI in range", 0.03, 8)
     return _base(candles, Side.FLAT, 0.4, "major: no aligned trend or reversion edge", 0.0, 1)
@@ -157,8 +165,9 @@ def _breakout(candles: list[Candle], closes: list[float], size: float, bars: int
     mom_short = closes[-1] / closes[-3] - 1.0
     mom_med = closes[-1] / closes[-6] - 1.0
     vol_mult = 1.6 if vol is VolatilityTier.HIGH else 1.3
-    if closes[-1] > max(window) and volume_now > volume_base * vol_mult and mom_short > 0.008 and mom_med > 0.0:
-        return _base(candles, Side.LONG, 0.76, "volume-confirmed breakout with multi-momentum", size, bars)
+    macd = _macd_proxy(closes)
+    if closes[-1] > max(window) and volume_now > volume_base * vol_mult and mom_short > 0.008 and mom_med > 0.0 and macd > 0:
+        return _base(candles, Side.LONG, 0.78, "volume-confirmed breakout with multi-momentum and MACD", size, bars)
     return _base(candles, Side.FLAT, 0.35, "no confirmed breakout with multi-momentum", 0.0, 1)
 
 
@@ -190,14 +199,15 @@ def _meme(candles: list[Candle], closes: list[float], vol: VolatilityTier) -> Si
     extension = closes[-1] / closes[-8] - 1.0
     vol_accel = candles[-1].volume / max(candles[-2].volume, 1)
     rising = closes[-1] > closes[-2] > closes[-3]
+    rsi = _rsi(closes)
     ext_limit = 0.28 if vol is VolatilityTier.HIGH else 0.35
     accel_req = 1.35 if vol is VolatilityTier.HIGH else 1.2
     if liquidity < 1000:
         return _base(candles, Side.FLAT, 0.2, "meme liquidity proxy too thin", 0.0, 1)
-    if extension > ext_limit:
-        return _base(candles, Side.FLAT, 0.35, "meme chase filter: 8-bar extension too large", 0.0, 1)
+    if extension > ext_limit or rsi > 78:
+        return _base(candles, Side.FLAT, 0.35, "meme chase filter: extension or overbought RSI", 0.0, 1)
     if burst > 0.15 and vol_accel > accel_req and rising:
-        return _base(candles, Side.LONG, 0.82, "meme momentum burst with volume accel and consistency; hard time stop", 0.005, 3)
+        return _base(candles, Side.LONG, 0.84, "meme momentum burst with volume accel, consistency, RSI ok; hard time stop", 0.005, 3)
     return _base(candles, Side.FLAT, 0.3, "meme: no qualified burst", 0.0, 1)
 
 
@@ -213,8 +223,11 @@ def _l2(candles: list[Candle], closes: list[float], benchmark: list[Candle] | No
     bench12 = bench_closes[-1] / bench_closes[-12] - 1.0
     thresh6 = 0.038 if vol is VolatilityTier.HIGH else 0.03
     thresh12 = 0.028 if vol is VolatilityTier.HIGH else 0.02
-    if own6 - bench6 > thresh6 and own12 - bench12 > thresh12:
-        return _base(candles, Side.LONG, 0.75, "l2 multi-period relative strength versus benchmark", 0.03, 12)
+    own_vol = fmean(c.volume for c in candles[-6:])
+    bench_vol = fmean(c.volume for c in benchmark[-6:]) if benchmark else 1
+    rel_vol = own_vol / max(bench_vol, 1)
+    if own6 - bench6 > thresh6 and own12 - bench12 > thresh12 and rel_vol > 0.8:
+        return _base(candles, Side.LONG, 0.76, "l2 multi-period relative strength + relative volume versus benchmark", 0.03, 12)
     return _base(candles, Side.FLAT, 0.4, "l2 not leading benchmark on multi-period", 0.0, 1)
 
 
