@@ -1,6 +1,6 @@
 """Risk gates. Strategies propose; this module decides.
 
-Enhanced with notes for volatility context (v0.3).
+Enhanced with volatility-aware size reduction (v0.5).
 """
 
 from __future__ import annotations
@@ -49,19 +49,21 @@ def evaluate(
         reasons.append("stablecoins are monitor-only")
     if signal.confidence < MIN_CONFIDENCE[signal.asset_class]:
         reasons.append("confidence below class threshold")
-    # Volatility-aware note (research): high vol mentioned in reason reduces effective size slightly in spirit
-    if "vol=high" in signal.reason and signal.size_fraction > 0:
-        reasons.append("high volatility context noted")
+    high_vol = "vol=high" in signal.reason
+    if high_vol and signal.size_fraction > 0:
+        reasons.append("high volatility context noted; size reduced")
     cap = CLASS_LIMITS[signal.asset_class]
     size = min(signal.size_fraction, cap)
+    if high_vol:
+        size *= 0.75  # Adaptive reduction in high vol
     if signal.side is Side.ALERT:
         reasons.append("monitor only, no order")
     if signal.side is Side.FLAT:
         size = 0.0
-    if reasons and not any(r == "high volatility context noted" for r in reasons):
+    if reasons and not any("high volatility" in r for r in reasons):
         return RiskDecision(False, 0.0, tuple(reasons))
     if size <= 0 and signal.side is Side.LONG:
         reasons.append("class size cap is zero")
         return RiskDecision(False, 0.0, tuple(reasons))
     final_reasons = tuple(reasons) if reasons else ("within class limits",)
-    return RiskDecision(True, size, final_reasons)
+    return RiskDecision(True, round(size, 4), final_reasons)
