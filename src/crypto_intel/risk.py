@@ -1,6 +1,6 @@
 """Risk gates. Strategies propose; this module decides.
 
-Enhanced with volatility-aware size reduction (v0.5).
+Enhanced with volatility-aware size reduction and adaptive confidence floors (v0.6).
 """
 
 from __future__ import annotations
@@ -47,20 +47,23 @@ def evaluate(
         reasons.append("rwa gap halt")
     if signal.asset_class is AssetClass.STABLECOIN and signal.side is not Side.ALERT:
         reasons.append("stablecoins are monitor-only")
-    if signal.confidence < MIN_CONFIDENCE[signal.asset_class]:
-        reasons.append("confidence below class threshold")
     high_vol = "vol=high" in signal.reason
+    min_conf = MIN_CONFIDENCE[signal.asset_class]
+    if high_vol:
+        min_conf += 0.05  # Adaptive higher floor in high vol
+    if signal.confidence < min_conf:
+        reasons.append("confidence below class threshold (vol-adjusted)")
     if high_vol and signal.size_fraction > 0:
         reasons.append("high volatility context noted; size reduced")
     cap = CLASS_LIMITS[signal.asset_class]
     size = min(signal.size_fraction, cap)
     if high_vol:
-        size *= 0.75  # Adaptive reduction in high vol
+        size *= 0.70  # Stronger adaptive reduction in high vol
     if signal.side is Side.ALERT:
         reasons.append("monitor only, no order")
     if signal.side is Side.FLAT:
         size = 0.0
-    if reasons and not any("high volatility" in r for r in reasons):
+    if reasons and not any("high volatility" in r or "vol-adjusted" in r for r in reasons):
         return RiskDecision(False, 0.0, tuple(reasons))
     if size <= 0 and signal.side is Side.LONG:
         reasons.append("class size cap is zero")

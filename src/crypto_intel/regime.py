@@ -1,6 +1,6 @@
 """Shared market-regime classifier for asset-class research rules.
 
-Enhanced with volatility context (v0.3).
+Enhanced with volatility context and adaptive thresholds (v0.6).
 """
 
 from __future__ import annotations
@@ -43,10 +43,12 @@ def classify(candles: list[Candle]) -> Regime:
     if len(candles) < 8:
         raise ValueError("need at least 8 candles")
     width = atr_pct(candles)
-    if width >= 0.035:
+    stress_thresh = 0.032 if volatility_tier(candles) is VolatilityTier.HIGH else 0.035
+    if width >= stress_thresh:
         return Regime.STRESS
     closes = [c.close for c in candles]
     span = closes[-1] / closes[-8] - 1.0
-    if abs(span) >= 0.025:
+    trend_thresh = 0.022 if volatility_tier(candles) is VolatilityTier.LOW else 0.025
+    if abs(span) >= trend_thresh:
         return Regime.TREND
     return Regime.RANGE

@@ -1,3 +1,3 @@
-"""Paper-only crypto trading information system (enhanced v0.3)."""
+"""Paper-only crypto trading information system (enhanced v0.6)."""
 
-__version__ = "0.3.0"
+__version__ = "0.6.0"
