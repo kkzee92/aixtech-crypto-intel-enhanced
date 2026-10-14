@@ -1,7 +1,7 @@
 [project]
 name = "crypto-intel"
-version = "0.3.0"
-description = "Enhanced paper-only crypto trading information system with multi-factor asset-class strategies and strengthened security controls"
+version = "0.5.0"
+description = "Enhanced paper-only crypto trading information system with adaptive multi-factor asset-class strategies and strengthened cyber/data security architecture"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

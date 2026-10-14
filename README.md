@@ -1,22 +1,22 @@
-# AIxTech crypto intel enhanced: paper-only trading information system v0.4
+# AIxTech crypto intel enhanced: paper-only trading information system v0.5
 
 Enhanced research harness for automated cryptocurrency **information** and paper strategy evaluation.
-Builds on the original [zeekiankok92/aixtech-crypto-intel](https://github.com/zeekiankok92/aixtech-crypto-intel).
+Builds on the original [zeekiankok92/aixtech-crypto-intel](https://github.com/zeekiankok92/aixtech-crypto-intel) and prior enhancements.
 
 It does not place live orders, does not store exchange secrets, and is not financial advice.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
-![version](https://img.shields.io/badge/version-0.4.0-blue)
+![version](https://img.shields.io/badge/version-0.5.0-blue)
 ![mode](https://img.shields.io/badge/execution-paper%20only-orange)
 ![Licence](https://img.shields.io/badge/licence-MIT-green)
 
-## Enhancements in v0.4
+## Enhancements in v0.5
 
-- Adaptive volatility-tier thresholds across all asset-class strategies (tighter filters in high vol, adjusted RSI/extension/gap/drift bands).
-- Multi-factor refinements: multi-EMA, volume acceleration, multi-period relative strength, funding stability.
-- Strengthened cyber/data security architecture: zero-trust principles, expanded anomaly scoring, formalized incident handling, encryption and monitoring guidelines.
-- Improved regime + volatility context in signals and risk notes.
-- Updated documentation and playbooks.
+- Fully implemented adaptive volatility-tier thresholds across all asset-class strategies (tighter filters, higher confirmation, reduced size in high vol).
+- Multi-factor refinements with vol-adjusted RSI bands, extension limits, gap/drift thresholds, volume multipliers, and confidence haircuts.
+- Strengthened cyber/data security architecture: expanded redaction (including phones), sanitize_input, enhanced anomaly_score with staleness, zero-trust principles.
+- Risk gate now reduces size_fraction by 25% in high-vol contexts.
+- Updated documentation, playbooks, and versioning.
 
 See [docs/asset-class-strategies.md](docs/asset-class-strategies.md) and [docs/security-architecture.md](docs/security-architecture.md).
 
@@ -26,7 +26,7 @@ See [docs/asset-class-strategies.md](docs/asset-class-strategies.md) and [docs/s
 - Labels regimes (trend/range/stress) with volatility tiers (low/normal/high).
 - Scores signals with multi-factor confidence (adjusted for high vol), then a risk gate that can shrink or refuse.
 - Applies declared round-trip costs in paper backtests.
-- Writes a hash-chained audit log with anomaly notes, attests sources, redacts secrets.
+- Writes a hash-chained audit log with anomaly notes and sanitization, attests sources, redacts secrets.
 - Backtests on synthetic candles only.
 
 | Asset class | Enhanced research rule | Risk cap (base) | Cost |
@@ -52,7 +52,7 @@ PYTHONPATH=src python -m crypto_intel brief fixtures/candles_synthetic.json
 
 ## Controls
 
-Paper-only. No live credentials. Class caps, confidence floors, kill switch, drawdown halt, anomaly detection, hash-chained audit, PDPA tripwire, gitleaks CI. Zero-trust research design.
+Paper-only. No live credentials. Class caps, confidence floors, kill switch, drawdown halt, anomaly detection, hash-chained audit, PDPA tripwire, gitleaks CI. Zero-trust research design with adaptive risk.
 
 ## Honesty
 
