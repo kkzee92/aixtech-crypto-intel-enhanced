@@ -1,64 +1,86 @@
-# Security architecture (v0.3 enhanced)
+# Security architecture (v0.4 enhanced)
 
-Version 0.3 extends the control plane with anomaly scoring and expanded detection. It is still a research design, not a certified security product and not legal advice.
+Version 0.4 further strengthens the research control plane with adaptive anomaly scoring, zero-trust principles, data handling guidelines, and formalized audit integrity. It remains a research design, not a certified security product, and not legal or compliance advice.
 
 ## Trust boundaries
 
-Synthetic fixture or injected public ticker -> Source attestation -> Strategy research rules plus regime and volatility overlay -> Risk gate: class caps, kill switch, drawdown, vol notes -> Paper fill only -> Hash-chained audit log with redaction and anomaly notes.
+```mermaid
+flowchart LR
+    F["Synthetic fixture or injected public ticker"] --> AT["Source attestation + anomaly score"]
+    AT --> S["Strategy research rules + regime + vol overlay"]
+    S --> R["Risk gate: class caps, kill switch, drawdown, vol notes"]
+    R --> P["Paper fill only"]
+    P --> A["Hash-chained audit log with redaction"]
+    K["Trade or withdrawal keys"] -.-> X["Refused. Never loaded"]
+    RBAC["Researcher, auditor, operator"] --> R
+```
 
-Trade or withdrawal keys are refused. Never loaded. Roles cannot enable live trading.
+The system has no order router. `assert_paper_only` refuses any mode other than `PAPER`. `refuse_trade_secret` rejects names that look like trade, withdraw, transfer, or order credentials. Roles cannot enable live trading. Zero-trust assumption: no component trusts unattested input.
 
 ## Roles
 
 | Role | Allowed | Denied |
 |---|---|---|
 | Researcher | scan, backtest, read audit | place order, withdraw, enable live |
-| Auditor | read audit, verify chain, scan | place order, withdraw, enable live |
+| Auditor | read audit, verify chain, scan, anomaly review | place order, withdraw, enable live |
 | Operator | scan, kill switch, read audit | place order, withdraw, enable live |
 
-There is no trader role. Promoting a signal to a broker is a separate system.
+There is no trader role. Promoting a signal to a broker is a separate, human-approved system with its own controls.
 
-## Data classes
+## Data classes and handling
 
-| Field | Class | Handling |
-|---|---|---|
-| Symbol, OHLCV | Public market | Synthetic in this repo |
-| Funding rate | Public market | Research feature only |
-| Source label | Integrity | Must be SYNTHETIC or PUBLIC_READ |
-| Read-only market key | Secret, optional | Name must say read, market, or public. Never logged |
-| Trade or withdrawal key | Secret | Refused |
-| Wallet address | Sensitive identifier | Redacted, banned from fixtures |
-| Email, NRIC, phone | Personal | Tripwire |
+| Field | Class | Handling | Retention / Protection |
+|---|---|---|---|
+| Symbol, OHLCV | Public market | Synthetic in this repo | Research; no encryption needed for fixtures |
+| Funding rate | Public market | Research feature only | Research |
+| Source label | Integrity | Must be SYNTHETIC or PUBLIC_READ | Attested via hash |
+| Read-only market key | Secret, optional | Name must say read, market, or public. Never logged | Rotate externally; never commit |
+| Trade or withdrawal key | Secret | Refused | Never stored |
+| Wallet address | Sensitive identifier | Redacted, banned from fixtures | Do not collect |
+| Email, NRIC, phone | Personal | Tripwire | Do not collect |
 
-## Feed integrity
+PDPA note: the tripwire is not a full DLP product. Production deployments require access control, vendor review, encryption at rest for any persistent data, and human DPO oversight. Wallet addresses can be personal data; this repo does not store them.
 
-`anomaly_score` flags large price jumps or volume spikes as research notes. `feed_status` (inherited concept) flags non-positive price, stale prints, or jumps. Tests inject the payload. The default path does not open a socket.
+## Feed integrity and anomaly detection
+
+`anomaly_score` flags large price jumps (>15-25%), volume spikes, or stale prints as research notes (score 0-1). High scores are logged and can influence risk notes. `feed_status` concepts flag non-positive price, prints older than 15 minutes, or jumps. Tests inject the payload. The default path does not open a socket. Source attestation hashes label + body so fixture swaps change the digest. Loader rejects non-SYNTHETIC.
 
 ## Threats and controls
 
 | Threat | Control |
 |---|---|
-| Secret committed | gitleaks CI, expanded redaction patterns, no key loader |
+| Secret committed | gitleaks CI, expanded redaction patterns, no key loader, pre-commit style checks |
 | Trade key pasted into config | `refuse_trade_secret` |
-| Strategy injection via fixture | SYNTHETIC label required, source attestation |
-| Stale or jumped public ticker | anomaly score and feed status |
-| Oversized risk on thin assets | Per-class cap, confidence floor, class cost, vol notes |
+| Strategy injection via fixture | SYNTHETIC label required, source attestation, anomaly scoring |
+| Stale or jumped public ticker | anomaly score, feed status watch/high |
+| Oversized risk on thin assets | Per-class cap, confidence floor, class cost, vol-adjusted notes |
 | Runaway loss | Drawdown halt and kill switch |
-| Audit tamper | SHA-256 chain over sequence, action, detail |
-| Live-order mistake | No live client; mode guard; RBAC deny |
-| Personal data in agent context | Ban plus CI tripwire |
-| Privilege creep | No role can place an order |
+| Audit tamper | SHA-256 chain over sequence, action, detail; verify function |
+| Live-order mistake | No live client; mode guard; RBAC deny; paper-only assertion |
+| Personal data in agent context | AGENTS.md ban plus CI tripwire |
+| Privilege creep | No role can place an order; least privilege |
+| Input injection | Redaction, sanitization before logging |
+| Replay or stale data | Timestamp checks in feed status (research) |
 
 ## Incident handling
 
 1. Engage the kill switch. New paper size goes to zero.
-2. Freeze the audit chain and record the source attestation digest.
-3. If a secret was pasted, rotate it outside this repo and purge it from history.
-4. Do not open a public issue that contains a secret or a wallet address.
-5. A human reviews before the kill switch is cleared.
+2. Freeze the audit chain and record the source attestation digest and any high anomaly scores.
+3. If a secret was pasted, rotate it outside this repo, purge it from history, and review CI logs.
+4. Do not open a public issue that contains a secret, wallet address, or personal data.
+5. A human reviews before the kill switch is cleared. Document the review.
+6. Post-incident: update redaction patterns if a new secret form was seen.
 
-## Operating rules
+## Operating rules and architecture principles
 
-- Market-data credentials, if ever added, stay read-only and separate from any future trade credential.
-- Logs pass through `redact` before they are stored.
-- Default deployment is research. Promoting a signal to a broker is a separate, human-approved system.
+- Market-data credentials, if ever added, stay read-only, separate from any future trade credential, and never logged.
+- Logs pass through `redact` before they are stored. Prefer structured logging with classification tags.
+- Default deployment is research / paper-only. Promoting a signal to a broker is a separate, human-approved system.
+- Zero-trust: attest every input source; verify audit chain on read; assume fixtures can be adversarial.
+- Encryption: for any future persistent store, use encryption at rest (e.g., AES-256) and TLS in transit. This research repo uses none because it holds only synthetic data.
+- Monitoring: track anomaly scores, kill-switch activations, and failed source attestations.
+- Secret management: no secrets in tree; use external managers for any production extension.
+- Audit immutability: the hash chain provides research-level integrity; production would add append-only storage and external anchoring.
+- Regular review: strategies and risk gates are versioned; changes require human review and test coverage.
+
+This design prioritizes research integrity, transparency of heuristics, and prevention of accidental live execution or secret leakage.
